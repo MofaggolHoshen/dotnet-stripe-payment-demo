@@ -1,0 +1,43 @@
+# .NET
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# Visual Studio
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.iml
+
+# Configuration files with secrets
+appsettings.Development.json
+appsettings.Production.json
+*.key
+*.crt
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Testing
+TestResults/
+.coverage
+
+# Logs
+logs/
+*.log
