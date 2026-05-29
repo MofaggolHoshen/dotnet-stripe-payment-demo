@@ -1,0 +1,200 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Stripe;
+using StripePaymentDemo.Models;
+using StripePaymentDemo.Services.Configuration;
+using StripePaymentDemo.Services.Exceptions;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace StripePaymentDemo.Services
+{
+    public interface IStripeService
+    {
+        Task<Stripe.Customer> CreateCustomerAsync(string email, string name, Dictionary<string, string> metadata = null);
+        Task<Stripe.Customer> GetCustomerAsync(string stripeCustomerId);
+        Task<Stripe.Customer> UpdateCustomerAsync(string stripeCustomerId, string email = null, string name = null);
+        Task DeleteCustomerAsync(string stripeCustomerId);
+        Task<List<Stripe.Customer>> ListCustomersAsync(int limit = 10);
+        Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName);
+    }
+
+    public class StripeService : IStripeService
+    {
+        private readonly ILogger<StripeService> _logger;
+        private readonly StripeSettings _stripeSettings;
+        private readonly CustomerService _customerService;
+
+        public StripeService(ILogger<StripeService> logger, IOptions<StripeSettings> stripeSettings)
+        {
+            _logger = logger;
+            _stripeSettings = stripeSettings.Value;
+            _customerService = new CustomerService();
+
+            ValidateConfiguration();
+        }
+
+        /// <summary>
+        /// Creates a new customer in Stripe
+        /// </summary>
+        public async Task<Stripe.Customer> CreateCustomerAsync(
+            string email, 
+            string name, 
+            Dictionary<string, string> metadata = null)
+        {
+            return await ExecuteWithRetryAsync(async () =>
+            {
+                _logger.LogInformation($"Creating Stripe customer for {email}");
+
+                var options = new CustomerCreateOptions
+                {
+                    Email = email,
+                    Name = name,
+                    Metadata = metadata ?? new Dictionary<string, string>()
+                };
+
+                var customer = await _customerService.CreateAsync(options);
+
+                _logger.LogInformation($"Customer created: {customer.Id}");
+                return customer;
+            }, "CreateCustomer");
+        }
+
+        /// <summary>
+        /// Retrieves a customer from Stripe
+        /// </summary>
+        public async Task<Stripe.Customer> GetCustomerAsync(string stripeCustomerId)
+        {
+            return await ExecuteWithRetryAsync(async () =>
+            {
+                _logger.LogDebug($"Retrieving customer: {stripeCustomerId}");
+
+                var customer = await _customerService.GetAsync(stripeCustomerId);
+
+                _logger.LogDebug($"Customer retrieved: {customer.Email}");
+                return customer;
+            }, "GetCustomer");
+        }
+
+        /// <summary>
+        /// Updates an existing customer in Stripe
+        /// </summary>
+        public async Task<Stripe.Customer> UpdateCustomerAsync(
+            string stripeCustomerId,
+            string email = null,
+            string name = null)
+        {
+            return await ExecuteWithRetryAsync(async () =>
+            {
+                _logger.LogInformation($"Updating customer: {stripeCustomerId}");
+
+                var options = new CustomerUpdateOptions();
+                
+                if (!string.IsNullOrEmpty(email))
+                    options.Email = email;
+                
+                if (!string.IsNullOrEmpty(name))
+                    options.Name = name;
+
+                var customer = await _customerService.UpdateAsync(stripeCustomerId, options);
+
+                _logger.LogInformation($"Customer updated: {stripeCustomerId}");
+                return customer;
+            }, "UpdateCustomer");
+        }
+
+        /// <summary>
+        /// Deletes a customer from Stripe
+        /// </summary>
+        public async Task DeleteCustomerAsync(string stripeCustomerId)
+        {
+            await ExecuteWithRetryAsync(async () =>
+            {
+                _logger.LogInformation($"Deleting customer: {stripeCustomerId}");
+                await _customerService.DeleteAsync(stripeCustomerId);
+                _logger.LogInformation($"Customer deleted: {stripeCustomerId}");
+                return true;
+            }, "DeleteCustomer");
+        }
+
+        /// <summary>
+        /// Lists customers from Stripe
+        /// </summary>
+        public async Task<List<Stripe.Customer>> ListCustomersAsync(int limit = 10)
+        {
+            return await ExecuteWithRetryAsync(async () =>
+            {
+                _logger.LogDebug($"Listing customers (limit: {limit})");
+
+                var options = new CustomerListOptions { Limit = limit };
+                var customers = await _customerService.ListAsync(options);
+
+                _logger.LogDebug($"Retrieved {customers.Data.Count} customers");
+                return customers.Data;
+            }, "ListCustomers");
+        }
+
+        /// <summary>
+        /// Executes an operation with retry logic and error handling
+        /// </summary>
+        public async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation, string operationName)
+        {
+            int retryCount = 0;
+            int delay = _stripeSettings.RetryDelayMs;
+
+            while (retryCount <= _stripeSettings.MaxRetries)
+            {
+                try
+                {
+                    return await operation();
+                }
+                catch (StripeException ex) when (IsRetriableException(ex) && retryCount < _stripeSettings.MaxRetries)
+                {
+                    retryCount++;
+                    _logger.LogWarning($"Operation '{operationName}' failed. Retry {retryCount}/{_stripeSettings.MaxRetries} in {delay}ms");
+
+                    await Task.Delay(delay);
+                    delay *= 2; // Exponential backoff
+                }
+                catch (StripeException ex)
+                {
+                    _logger.LogError($"Stripe error in '{operationName}': {ex.Message}");
+                    throw new StripeException($"Failed to {operationName}: {ex.Message}", ex);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Unexpected error in '{operationName}'");
+                    throw new StripeException($"Unexpected error in {operationName}: {ex.Message}", ex);
+                }
+            }
+
+            throw new StripeException($"Operation '{operationName}' failed after {_stripeSettings.MaxRetries} retries");
+        }
+
+        /// <summary>
+        /// Validates Stripe configuration
+        /// </summary>
+        private void ValidateConfiguration()
+        {
+            if (string.IsNullOrEmpty(_stripeSettings.SecretKey))
+            {
+                throw new StripeAuthenticationException("Stripe SecretKey is not configured");
+            }
+
+            StripeConfiguration.ApiKey = _stripeSettings.SecretKey;
+            _logger.LogInformation("Stripe service initialized successfully");
+        }
+
+        /// <summary>
+        /// Determines if an exception should be retried
+        /// </summary>
+        private bool IsRetriableException(StripeException ex)
+        {
+            // Retry on rate limit or timeout errors
+            return ex.Message.Contains("timeout") || 
+                   ex.Message.Contains("rate_limit") || 
+                   ex.Message.Contains("service_unavailable");
+        }
+    }
+}

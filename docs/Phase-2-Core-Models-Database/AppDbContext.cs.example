@@ -1,0 +1,114 @@
+using Microsoft.EntityFrameworkCore;
+using StripePaymentDemo.Models;
+
+namespace StripePaymentDemo.Data
+{
+    public class AppDbContext : DbContext
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+        {
+        }
+
+        public DbSet<Customer> Customers { get; set; }
+        public DbSet<Subscription> Subscriptions { get; set; }
+        public DbSet<Invoice> Invoices { get; set; }
+        public DbSet<WebhookEvent> WebhookEvents { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // Customer configuration
+            modelBuilder.Entity<Customer>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Email).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.StripeCustomerId).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.Phone).HasMaxLength(20);
+                entity.Property(e => e.Address).HasMaxLength(500);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+                // Index for faster lookups
+                entity.HasIndex(e => e.Email).IsUnique();
+                entity.HasIndex(e => e.StripeCustomerId).IsUnique();
+
+                // Relationships
+                entity.HasMany(e => e.Subscriptions)
+                    .WithOne(e => e.Customer)
+                    .HasForeignKey(e => e.CustomerId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasMany(e => e.Invoices)
+                    .WithOne(e => e.Customer)
+                    .HasForeignKey(e => e.CustomerId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // Subscription configuration
+            modelBuilder.Entity<Subscription>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.StripeSubscriptionId).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.Plan).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.BillingCycle).HasMaxLength(50);
+                entity.Property(e => e.Metadata).HasMaxLength(500);
+                entity.Property(e => e.Amount).HasColumnType("decimal(10, 2)");
+                entity.Property(e => e.Currency).HasDefaultValue("USD");
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+                // Index for faster lookups
+                entity.HasIndex(e => e.StripeSubscriptionId).IsUnique();
+                entity.HasIndex(e => e.CustomerId);
+                entity.HasIndex(e => e.Status);
+
+                // Relationships
+                entity.HasMany(e => e.Invoices)
+                    .WithOne(e => e.Subscription)
+                    .HasForeignKey(e => e.SubscriptionId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // Invoice configuration
+            modelBuilder.Entity<Invoice>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.StripeInvoiceId).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.ReceiptNumber).HasMaxLength(255);
+                entity.Property(e => e.PdfUrl).HasMaxLength(255);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.Property(e => e.Metadata).HasMaxLength(500);
+                entity.Property(e => e.Amount).HasColumnType("decimal(10, 2)");
+                entity.Property(e => e.AmountPaid).HasColumnType("decimal(10, 2)");
+                entity.Property(e => e.AmountDue).HasColumnType("decimal(10, 2)");
+                entity.Property(e => e.Currency).HasDefaultValue("USD");
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+                // Index for faster lookups
+                entity.HasIndex(e => e.StripeInvoiceId).IsUnique();
+                entity.HasIndex(e => e.CustomerId);
+                entity.HasIndex(e => e.Status);
+                entity.HasIndex(e => e.CreatedAt);
+            });
+
+            // WebhookEvent configuration
+            modelBuilder.Entity<WebhookEvent>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.StripeEventId).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.EventType).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Status).HasDefaultValue("pending");
+                entity.Property(e => e.ErrorMessage).HasMaxLength(500);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+                // Index for faster lookups
+                entity.HasIndex(e => e.StripeEventId).IsUnique();
+                entity.HasIndex(e => e.EventType);
+                entity.HasIndex(e => e.Status);
+                entity.HasIndex(e => e.CreatedAt);
+            });
+        }
+    }
+}

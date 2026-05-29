@@ -1,0 +1,22 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "AllowedHosts": "*",
+  "Stripe": {
+    "PublishableKey": "pk_test_YOUR_PUBLISHABLE_KEY_HERE",
+    "SecretKey": "sk_test_YOUR_SECRET_KEY_HERE",
+    "WebhookSigningSecret": "whsec_YOUR_WEBHOOK_SECRET_HERE"
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost;Database=StripeDemoDb;Integrated Security=true;TrustServerCertificate=true;"
+  },
+  "ApplicationSettings": {
+    "ApiVersion": "v1",
+    "EnableSwagger": true
+  }
+}
