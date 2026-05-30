@@ -1,1 +1,0 @@
-# dotnet-stripe-payment-demo
